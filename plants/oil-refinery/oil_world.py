@@ -2,6 +2,7 @@
 # NOTES:
 # Values of 1 = ON, OPEN
 # Values of 0 = OFF, CLOSED
+from PID import *
 
 import logging
 
@@ -39,13 +40,13 @@ class MyParser(argparse.ArgumentParser):
         sys.stderr.write('error: %s\n' % message)
         self.print_help()
         sys.exit(2)
-        
+
 # Create argparser object to add command line args and help option
 parser = MyParser(
 	description = 'This Python script starts the SCADA/ICS World Server',
 	epilog = '',
 	add_help = True)
-	
+
 # Add a "-i" argument to receive a filename
 parser.add_argument("-t", action = "store", dest="server_addr",
 					help = "Modbus server IP address to listen on")
@@ -54,7 +55,7 @@ parser.add_argument("-t", action = "store", dest="server_addr",
 if len(sys.argv)==1:
 	parser.print_help()
 	sys.exit(1)
-	
+
 # Split and process arguments into "args"
 args = parser.parse_args()
 
@@ -73,6 +74,15 @@ MODBUS_SERVER_PORT=5020
 # Amount of oil spilled/processed
 oil_spilled_amount = 0
 oil_processed_amount = 0
+oil_flow_out = 0
+oil_flow_out_cnt = 0
+oil_flow_in = 0
+
+#before PID Valve
+oil_before_valve = 0
+
+#after PID Valve
+oil_after_valve = 0
 
 # PLC Register values for various control functions
 PLC_FEED_PUMP = 0x01
@@ -83,17 +93,23 @@ PLC_OIL_SPILL = 0x06
 PLC_OIL_PROCESSED = 0x07
 PLC_WASTE_VALVE = 0x08
 PLC_OIL_UPPER = 0x09
+PLC_OIL_FLOW_RATE = 0x0A
+PLC_OIL_FLOW_AFTER = 0x0B
+PLC_CONTROL_VALVE_POS = 0x0C
 
-# Collision types
+### COLLISION TYPES ##
+flow_meter_in_collision = 0x1
+flow_meter_out_collision = 0xA
+PID_valve_collision = 0x2
+oil_processed_collision = 0x3
 tank_level_collision = 0x4
 ball_collision = 0x5
 outlet_valve_collision = 0x6
 sep_valve_collision = 0x7
 waste_valve_collision = 0x8
 oil_spill_collision = 0x9
-oil_processed_collision = 0x3
 
-# Helper function to set PLC values
+### MODBUS HANDLERS ###
 def PLCSetTag(addr, value):
     context[0x0].setValues(3, addr, [value])
 
@@ -107,11 +123,11 @@ def to_pygame(p):
 
 # Add "oil" to the world space
 def add_ball(space):
-    mass = 0.01
+    mass = 0.0001
     radius = 2
     inertia = pymunk.moment_for_circle(mass, 0, radius, (0,0))
     body = pymunk.Body(mass, inertia)
-    body._bodycontents.v_limit = 120
+    body._bodycontents.v_limit = 100
     body._bodycontents.h_limit = 1
     x = random.randint(69, 70)
     body.position = x, 565
@@ -137,7 +153,7 @@ def sep_valve(space):
     shape.collision_type = sep_valve_collision
     space.add(shape)
     return shape
-    
+
 # Add the separator vessel release
 def waste_valve(space):
     body = pymunk.Body()
@@ -150,10 +166,10 @@ def waste_valve(space):
     space.add(shape)
     return shape
 
-# Add the tank level sensor 
-def tank_level_sensor(space):   
+# Add the tank level sensor
+def tank_level_sensor(space):
     body = pymunk.Body()
-    body.position = (115, 535)
+    body.position = (115, 450)
     radius = 3
     a = (0, 0)
     b = (0, 0)
@@ -161,7 +177,7 @@ def tank_level_sensor(space):
     shape.collision_type = tank_level_collision # tank_level
     space.add(shape)
     return shape
-    
+
 # Outlet valve that lets oil from oil tank to the pipes
 def outlet_valve(space):
     body = pymunk.Body()
@@ -178,7 +194,7 @@ def outlet_valve(space):
 # Sensor at the bottom of the world that detects and counts spills
 def oil_spill_sensor(space):
     body = pymunk.Body()
-    body.position = (0, 100)
+    body.position = (0,100)
     radius = 7
     a = (0, 75)
     b = (137, 75)
@@ -186,7 +202,42 @@ def oil_spill_sensor(space):
     shape.collision_type = oil_spill_collision # oil spill sensor
     space.add(shape)
     return shape
-    
+
+def flow_meter_in(space):
+    body = pymunk.Body()
+    body.position = (110,350)
+    radius = 7
+    a = (0, 0)
+    b = (0, 30)
+    shape = pymunk.Segment(body, a, b, radius)
+    shape.collision_type = flow_meter_in_collision # oil spill sensor
+    space.add(shape)
+    return shape
+
+def flow_meter_out(space):
+    body = pymunk.Body()
+    body.position = (255,350)
+    radius = 7
+    a = (0, 0)
+    b = (0, 30)
+    shape = pymunk.Segment(body, a, b, radius)
+    shape.collision_type = flow_meter_out_collision # oil spill sensor
+    space.add(shape)
+    return shape
+
+def PID_valve_shape(space, percentageOpen):
+    body = pymunk.Body()
+    #rotation centre
+    body.position = (182,365+percentageOpen/4)
+    radius = 1
+    #line size
+    a = (0, -12)
+    b = (0, 12)
+    shape = pymunk.Segment(body, a, b, radius)
+    shape.collision_type = PID_valve_collision # PID_valve
+    space.add(shape)
+    return shape
+
 # Sensor at the bottom of the world that detects and counts spills
 def oil_processed_sensor(space):
     body = pymunk.Body()
@@ -212,12 +263,12 @@ def add_pump(space):
 def add_oil_unit(space):
     body = pymunk.Body()
     body.position = (300,300)
-    
+
     #oil storage unit
     l1 = pymunk.Segment(body, (-278, 250), (-278, 145), 1) #left side line
-    l2 = pymunk.Segment(body, (-278, 145), (-246, 107), 1) 
+    l2 = pymunk.Segment(body, (-278, 145), (-246, 107), 1)
     l3 = pymunk.Segment(body, (-180, 250), (-180, 145), 1) #right side line
-    l4 = pymunk.Segment(body, (-180, 145), (-215, 107), 1) 
+    l4 = pymunk.Segment(body, (-180, 145), (-215, 107), 1)
 
     #pipe to separator vessel
     l5 = pymunk.Segment(body, (-246, 107), (-246, 53), 1) #left side vertical line
@@ -225,16 +276,16 @@ def add_oil_unit(space):
     l7 = pymunk.Segment(body, (-19, 53), (-19, 33), 1)
     l8 = pymunk.Segment(body, (-215, 107), (-215, 80), 1) #right side vertical line
     l9 = pymunk.Segment(body, (-215, 80), (7, 80), 1) #top horizontal line
-    l10 = pymunk.Segment(body, (7, 80), (7, 33), 1) 
+    l10 = pymunk.Segment(body, (7, 80), (7, 33), 1)
 
     #separator vessel
     l11 = pymunk.Segment(body, (-19, 31), (-95, 31), 1) #top left horizontal line
     l12 = pymunk.Segment(body, (-95, 31), (-95, -23), 1) #left side vertical line
-    l13 = pymunk.Segment(body, (-95, -23), (-83, -23), 1) 
+    l13 = pymunk.Segment(body, (-95, -23), (-83, -23), 1)
     l14 = pymunk.Segment(body, (-83, -23), (-80, -80), 1) #left waste exit line
     l15 = pymunk.Segment(body, (-68, -80), (-65, -23), 1) #right waste exit line
-    l16 = pymunk.Segment(body, (-65, -23), (-45, -23), 1) 
-    l17 = pymunk.Segment(body, (-45, -23), (-45, -67), 1) #elevation vertical line 
+    l16 = pymunk.Segment(body, (-65, -23), (-45, -23), 1)
+    l17 = pymunk.Segment(body, (-45, -23), (-45, -67), 1) #elevation vertical line
     l18 = pymunk.Segment(body, (-45, -67), (13, -67), 1) #left bottom line
     l19 = pymunk.Segment(body, (13, -67), (13, -82), 1) #left side separator exit line
     l20 = pymunk.Segment(body, (43, -82), (43, -67), 1) #right side separator exit line
@@ -243,7 +294,7 @@ def add_oil_unit(space):
     l23 = pymunk.Segment(body, (77, 31), (7, 31), 1) #top right horizontal line
     l24 = pymunk.Segment(body, (-3, -67), (-3, 10), 3) #center separator line
     l35 = pymunk.Segment(body, (-3, 10), (-65, -23), 1)
- 
+
     #separator exit pipe
     l25 = pymunk.Segment(body, (43, -85), (43, -113), 1) #right side vertical line
     l26 = pymunk.Segment(body, (43, -113), (580, -113), 1) #top horizontal line
@@ -258,8 +309,8 @@ def add_oil_unit(space):
     l33 = pymunk.Segment(body, (-163, -112), (-163, -185), 1) #left side vertical line
     l34 = pymunk.Segment(body, (-134, -140), (-134, -185), 1) #right side vertical line
 
-    space.add(l1, l2, l3, l4, l5, l6, l7, l8, l9, l10, l11, l12, l13, l14, l15, 
-                l16, l17, l18, l19, l20, l21, l22, l23, l24, l25, 
+    space.add(l1, l2, l3, l4, l5, l6, l7, l8, l9, l10, l11, l12, l13, l14, l15,
+                l16, l17, l18, l19, l20, l21, l22, l23, l24, l25,
                 l26, l27, l28, l29, l30, l31, l32, l33, l34, l35) # 3
 
     return (l1,l2,l3,l4,l5,l6,l7,l8,l9,l10,l11,l12,l13,l14,l15,l16,l17,
@@ -273,7 +324,7 @@ def draw_polygon(bg, shape):
     for p in points:
         fpoints.append(to_pygame(p))
     pygame.draw.polygon(bg, THECOLORS['black'], fpoints)
-    
+
 # Draw a single line to the screen
 def draw_line(screen, line, color = None):
     body = line.body
@@ -285,7 +336,7 @@ def draw_line(screen, line, color = None):
         pygame.draw.lines(screen, THECOLORS["black"], False, [p1,p2])
     else:
         pygame.draw.lines(screen, color, False, [p1,p2])
-    
+
 # Draw lines from an iterable list
 def draw_lines(screen, lines):
     for line in lines:
@@ -296,26 +347,24 @@ def draw_lines(screen, lines):
         p2 = to_pygame(pv2)
         pygame.draw.lines(screen, THECOLORS["gray"], False, [p1,p2])
 
-# Default collision function for objects
+# ### - COLLISION RESULT - True or False - ###
 # Returning true makes the two objects collide normally just like "walls/pipes"
 def no_collision(space, arbiter, *args, **kwargs):
-    return True 
+    return True
 
 # Called when level sensor in tank is hit
 def level_reached(space, arbiter, *args, **kwargs):
     log.debug("Level reached")
     PLCSetTag(PLC_TANK_LEVEL, 1) # Level Sensor Hit, Tank full
-    PLCSetTag(PLC_FEED_PUMP, 0) # Turn off the pump
     return False
-    
+
 def oil_spilled(space, arbiter, *args, **kwargs):
     global oil_spilled_amount
     log.debug("Oil Spilled")
     oil_spilled_amount = oil_spilled_amount + 1
     PLCSetTag(PLC_OIL_SPILL, oil_spilled_amount) # We lost a unit of oil
-    PLCSetTag(PLC_FEED_PUMP, 0) # Attempt to shut off the pump
-    return False   
-    
+    return False
+
 def oil_processed(space, arbiter, *args, **kwargs):
     global oil_processed_amount
     log.debug("Oil Processed")
@@ -325,13 +374,30 @@ def oil_processed(space, arbiter, *args, **kwargs):
         PLCSetTag(PLC_OIL_UPPER, oil_processed_amount-65000) # We processed a unit of oil
     else:
         PLCSetTag(PLC_OIL_PROCESSED, oil_processed_amount) # We processed a unit of oil
-    return False  
-    
+    return False
+
+def measure_flow_before(space, arbiter, *args, **kwargs):
+    global oil_flow_in
+    log.debug("Oil Flow Out")
+    oil_flow_in = oil_flow_in + 1
+    #PLCSetTag(PLC_OIL_FLOW_BEFORE, oil_flow_in)
+    return False
+
+def measure_flow_after(space, arbiter, *args, **kwargs):
+    global oil_flow_out
+    log.debug("Oil Flow Out")
+    oil_flow_out = oil_flow_out + 1
+    PLCSetTag(PLC_OIL_FLOW_AFTER, oil_flow_out)
+    if oil_flow_out % 100 <= 5:
+        #since there is flow, tank level most be low enough
+        PLCSetTag(PLC_TANK_LEVEL, 0)
+    return False
+
 # This is on when separation is on
 def sep_open(space, arbiter, *args, **kwargs):
     log.debug("Begin separation")
     return False
-    
+
 # This fires when the separator is not processing
 def sep_closed(space, arbiter, *args, **kwargs):
     log.debug("Stop separation")
@@ -340,31 +406,33 @@ def sep_closed(space, arbiter, *args, **kwargs):
 def outlet_valve_open(space, arbiter, *args, **kwargs):
     log.debug("Outlet valve open")
     return False
-    
+
 def outlet_valve_closed(space, arbiter, *args, **kwargs):
     log.debug("Outlet valve close")
     return True
-    
+
 def waste_valve_open(space, arbiter, *args, **kwargs):
     log.debug("Waste valve open")
     return False
-    
+
 def waste_valve_closed(space, arbiter, *args, **kwargs):
     log.debug("Waste valve close")
     return True
 
 def run_world():
+    p = PID(0.9,0.3,0)
+    p.SetPoint = 60
+    p.setSampleTime(0.01)
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Crude Oil Pretreatment Unit")
     clock = pygame.time.Clock()
     running = True
 
-
     # Create game space (world) and set gravity to normal
     space = pymunk.Space() #2
     space.gravity = (0.0, -900.0)
-    
+
     # When oil collides with tank_level, call level_reached
     space.add_collision_handler(tank_level_collision, ball_collision, begin=level_reached)
     # When oil touches the oil_spill marker, call oil_spilled
@@ -373,21 +441,29 @@ def run_world():
     space.add_collision_handler(oil_processed_collision, ball_collision, begin=oil_processed)
     # Initial outlet valve condition is turned off
     space.add_collision_handler(outlet_valve_collision, ball_collision, begin=no_collision)
+    # PID_valve collision always true
+    space.add_collision_handler(PID_valve_collision, ball_collision, begin=outlet_valve_closed)
+    # flow meter only measure not collide
+    space.add_collision_handler(flow_meter_in_collision, ball_collision, begin=measure_flow_before)
+    # flow meter only measure not collide
+    space.add_collision_handler(flow_meter_out_collision, ball_collision, begin=measure_flow_after)
     # Initial sep valve condition is turned off
     space.add_collision_handler(sep_valve_collision, ball_collision, begin=no_collision)
     # Initial waste valve condition is turned off
     space.add_collision_handler(waste_valve_collision, ball_collision, begin=no_collision)
-    
+
     # Add the objects to the game world
     pump = add_pump(space)
     lines = add_oil_unit(space)
-    tank_level = tank_level_sensor(space)
     sep_valve_obj = sep_valve(space)
     oil_spill = oil_spill_sensor(space)
+    flow_meter_incoming = flow_meter_in(space)
+    flow_meter_outgoing = flow_meter_out(space)
+    tank_level = tank_level_sensor(space)
     oil_process = oil_processed_sensor(space)
     outlet = outlet_valve(space)
     waste_valve_obj = waste_valve(space)
-    
+
 
     balls = []
     ticks_to_next_ball = 1
@@ -396,11 +472,17 @@ def run_world():
     fontBig = pygame.font.SysFont(None, 40)
     fontMedium = pygame.font.SysFont(None, 26)
     fontSmall = pygame.font.SysFont(None, 18)
-
+    percentageOpen = 0
     while running:
+        p.update( PLCGetTag(PLC_OIL_FLOW_RATE) )
+        percentageOpen = p.output
+        if percentageOpen <= 0:
+            percentageOpen = 0
+        PID_valve = PID_valve_shape(space, percentageOpen)
+        #percentageOpen += 0.1
+
         # Advance the game clock
         clock.tick(FPS)
-
         for event in pygame.event.get():
             if event.type == QUIT:
                 running = False
@@ -412,39 +494,32 @@ def run_world():
         # Background color
         screen.fill(THECOLORS["grey"])
 
-        # If the feed pump is on
-        if PLCGetTag(PLC_FEED_PUMP) == 1:
-            # Draw the valve if the pump is on
-            # If the oil reaches the level sensor at the top of the tank
-            if (PLCGetTag(PLC_TANK_LEVEL) == 1):
-                PLCSetTag(PLC_FEED_PUMP, 0)
-
         # Oil Tank outlet valve open/closed collision handler
         if PLCGetTag(PLC_OUTLET_VALVE) == 1:
             space.add_collision_handler(outlet_valve_collision, ball_collision, begin=outlet_valve_open)
         elif PLCGetTag(PLC_OUTLET_VALVE) == 0: # Valve is closed
             space.add_collision_handler(outlet_valve_collision, ball_collision, begin=outlet_valve_closed)
-       
+
         # Separator valve open/closed collision handler
         if PLCGetTag(PLC_SEP_VALVE) == 1:
             space.add_collision_handler(sep_valve_collision, ball_collision, begin=sep_open)
         else:
             space.add_collision_handler(sep_valve_collision, ball_collision, begin=sep_closed)
-            
+
         # Waste water valve open/closed collision handler
         if PLCGetTag(PLC_WASTE_VALVE) == 1:
             space.add_collision_handler(waste_valve_collision, ball_collision, begin=waste_valve_open)
         else:
             space.add_collision_handler(waste_valve_collision, ball_collision, begin=waste_valve_closed)
-            
-            
+
+
         ticks_to_next_ball -= 1
 
         if ticks_to_next_ball <= 0 and PLCGetTag(PLC_FEED_PUMP) == 1:
             ticks_to_next_ball = 1
             ball_shape = add_ball(space)
             balls.append(ball_shape)
-            
+
         balls_to_remove = []
         for ball in balls:
             if ball.body.position.y < 0 or ball.body.position.x > SCREEN_WIDTH+150:
@@ -463,6 +538,9 @@ def run_world():
         draw_line(bg, outlet)
         draw_line(bg, waste_valve_obj)
         draw_line(bg, oil_spill, THECOLORS['red'])
+        draw_line(bg, flow_meter_incoming, THECOLORS['red'])
+        draw_line(bg, flow_meter_outgoing, THECOLORS['red'])
+        draw_line(bg, PID_valve, THECOLORS['red'])
         draw_line(bg, oil_process, THECOLORS['red'])
 
         #draw_ball(screen, separator_feed, THECOLORS['red'])
@@ -476,8 +554,9 @@ def run_world():
         tank_sensor = fontSmall.render(str("Tank Level Sensor"), 1, THECOLORS['blue'])
         separator_release = fontSmall.render(str("Separator Vessel Valve"), 1, THECOLORS['blue'])
         waste_sensor = fontSmall.render(str("Waste Water Valve"), 1, THECOLORS['blue'])
-        outlet_sensor = fontSmall.render(str("Outlet Valve"), 1, THECOLORS['blue'])
-        
+        #outlet_sensor = fontSmall.render(str("Outlet Valve"), 1, THECOLORS['blue'])
+        outlet_sensor = fontSmall.render(str(percentageOpen), 1, THECOLORS['blue'])
+
         bg.blit(title, (300, 40))
         bg.blit(name, (347, 10))
         bg.blit(instructions, (SCREEN_WIDTH-115, 0))
@@ -491,8 +570,10 @@ def run_world():
         bg.blit(waste_sensor, (90, 375))
         screen.blit(bg, (0, 0))
 
-        space.step(1/FPS) 
+        space.step(1/FPS)
         pygame.display.flip()
+        space.remove(PID_valve)
+        PLCSetTag(PLC_CONTROL_VALVE_POS, percentageOpen)
 
     if reactor.running:
         reactor.callFromThread(reactor.stop)
