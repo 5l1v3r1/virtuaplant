@@ -41,7 +41,7 @@ MODBUS_SLEEP=1
 class HMIWindow(Gtk.Window):
     oil_processed_amount = 0
     oil_spilled_amount = 0
-    oil_flow_before_amount = 0
+    #oil_flow_before_amount = 0
     oil_flow_after_amount = 0
     old_flow_amount = 0
     new_flow_amount = 0
@@ -216,11 +216,11 @@ class HMIWindow(Gtk.Window):
         elementIndex += 1
 
         # Oil Flow Before
-        oil_flow_before_label = Gtk.Label("Amount of Oil to Control Valve")
-        oil_flow_before_value = Gtk.Label()
-        grid.attach(oil_flow_before_label, 4, elementIndex, 1, 1)
-        grid.attach(oil_flow_before_value, 5, elementIndex, 1, 1)
-        elementIndex += 1
+        #oil_flow_before_label = Gtk.Label("Amount of Oil to Control Valve")
+        #oil_flow_before_value = Gtk.Label()
+        #grid.attach(oil_flow_before_label, 4, elementIndex, 1, 1)
+        #grid.attach(oil_flow_before_value, 5, elementIndex, 1, 1)
+        #elementIndex += 1
 
         # Oil Flow After
         oil_flow_after_label = Gtk.Label("Oil Flow After Control Valve")
@@ -422,8 +422,8 @@ class HMIWindow(Gtk.Window):
                 self.waste_value.set_markup("<span weight='bold' foreground='red'>CLOSED</span>")
 
             ### - FLOW RATE AND PID VALVE POSITION - ###
-            if regs[9]:
-                self.oil_flow_before_value.set_markup("<span weight='bold' foreground='black'>" + str(regs[9]) + " Liters</span>")
+            #if regs[9]:
+                #self.oil_flow_before_value.set_markup("<span weight='bold' foreground='black'>" + str(regs[9]) + " Liters</span>")
             if regs[10]:
                 if self.new_flow_amount != 0:
                     #calculate flow rate
