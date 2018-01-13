@@ -56,7 +56,7 @@ class HMIWindow(Gtk.Window):
 
     # Default values for the HMI labels
     def resetLabels(self):
-        self.feed_pump_value.set_markup("<span weight='bold' foreground='gray33'>N/A</span>")
+        self.feed_pump__command_value.set_markup("<span weight='bold' foreground='gray33'>N/A</span>")
         self.separator_value.set_markup("<span weight='bold' foreground='gray33'>N/A</span>")
         self.level_switch_value.set_markup("<span weight='bold' foreground='gray33'>N/A</span>")
         self.process_status_value.set_markup("<span weight='bold' foreground='gray33'>N/A</span>")
@@ -90,8 +90,8 @@ class HMIWindow(Gtk.Window):
         elementIndex += 1
 
         # Crude Oil Feed Pump
-        feed_pump_label = Gtk.Label("Crude Oil Tank Feed Pump")
-        feed_pump_value = Gtk.Label()
+        feed_pump__command_label = Gtk.Label("Crude Oil Tank Feed Pump Command")
+        feed_pump__command_value = Gtk.Label()
 
         feed_pump_start_button = Gtk.Button("START")
         feed_pump_stop_button = Gtk.Button("STOP")
@@ -99,8 +99,8 @@ class HMIWindow(Gtk.Window):
         feed_pump_start_button.connect("clicked", self.setPump, 1)
         feed_pump_stop_button.connect("clicked", self.setPump, 0)
 
-        grid.attach(feed_pump_label, 4, elementIndex, 1, 1)
-        grid.attach(feed_pump_value, 5, elementIndex, 1, 1)
+        grid.attach(feed_pump__command_label, 4, elementIndex, 1, 1)
+        grid.attach(feed_pump__command_value, 5, elementIndex, 1, 1)
         grid.attach(feed_pump_start_button, 6, elementIndex, 1, 1)
         grid.attach(feed_pump_stop_button, 7, elementIndex, 1, 1)
         elementIndex += 1
@@ -217,7 +217,7 @@ class HMIWindow(Gtk.Window):
         grid.attach(virtual_refinery, 4, elementIndex, 2, 1)
 
         # Attach Value Labels
-        self.feed_pump_value = feed_pump_value
+        self.feed_pump__command_value = feed_pump__command_value
         self.process_status_value = process_status_value
         self.connection_status_value = connection_status_value
         self.separator_value = separator_value
@@ -233,6 +233,7 @@ class HMIWindow(Gtk.Window):
         # Set default label values
         self.resetLabels()
         self.setTankLevelHelper(self.tank_level_sensor_height)
+        self.setPumpHelper(1)
         GObject.timeout_add_seconds(MODBUS_SLEEP, self.update_status)
 
     def setPumpHelper(self, data):
@@ -247,9 +248,8 @@ class HMIWindow(Gtk.Window):
 
     # Control the tank level register values
     def setTankLevelHelper(self, data):
-        self.tank_level_sensor_height += data
         try:
-            self.modbusClient.write_register(0x02, self.tank_level_sensor_height)
+            self.modbusClient.write_register(0x02, data)
         except:
             pass
 
@@ -270,15 +270,18 @@ class HMIWindow(Gtk.Window):
         except:
             pass
 
-    def setOutletValve(self, widget, data=None):
+    def setOutletValveHelper(self, data):
         try:
             self.modbusClient.write_register(0x03, data)
         except:
             pass
 
+    def setOutletValve(self, widget, data=None):
+        self.setOutletValveHelper(data)
+
     def sendMeasuredFlowrate(self, data):
         try:
-            self.modbusClient.write_register(0x0A, data)
+            self.modbusClient.write_register(0x0A, data) #regs[9]
         except:
             pass
 
@@ -301,18 +304,18 @@ class HMIWindow(Gtk.Window):
 
             # If the feed pump "0x01" is set to 1, then the pump is running
             if regs[0] == 1:
-                self.feed_pump_value.set_markup("<span weight='bold' foreground='green'>RUNNING</span>")
+                self.feed_pump__command_value.set_markup("<span weight='bold' foreground='green'>RUNNING</span>")
             else:
-                self.feed_pump_value.set_markup("<span weight='bold' foreground='red'>STOPPED</span>")
+                self.feed_pump__command_value.set_markup("<span weight='bold' foreground='red'>STOPPED</span>")
 
             # If the level sensor is ON
             if regs[1] == 1:
                 self.level_switch_value.set_markup("<span weight='bold' foreground='green'>ON</span>")
                 self.setPumpHelper(0)
+                self.setOutletValveHelper(1)
             else:
                 self.level_switch_value.set_markup("<span weight='bold' foreground='red'>OFF</span>")
                 self.setPumpHelper(1)
-
             # Outlet Valve status
             if regs[2] == 1:
                 self.outlet_valve_value.set_markup("<span weight='bold' foreground='green'>OPEN</span>")
@@ -348,9 +351,16 @@ class HMIWindow(Gtk.Window):
                     #calculate flow rate
                     self.old_flow_amount = self.new_flow_amount
                     self.new_flow_amount = regs[10]
+                    # If more than 300 liters have flown through after
+                    # the PID valve, safe to say, level is not reached
+                    if self.new_flow_amount % 100 <= 20:
+                        self.setTankLevelHelper(0)
+                        self.setOutletValveHelper(0)
+
                     self.flow_rate = (self.new_flow_amount - self.old_flow_amount) / self.counter
                     self.oil_flow_after_value.set_markup("<span weight='bold' foreground='black'>" + str(self.flow_rate) + " Liters / seconds</span>")
                     self.counter = 0
+                    #When flow was calculated, send it to regs[9]
                     self.sendMeasuredFlowrate(self.flow_rate)
 
                 else:
