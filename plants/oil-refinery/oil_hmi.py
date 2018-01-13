@@ -67,7 +67,7 @@ class HMIWindow(Gtk.Window):
         self.connection_status_value.set_markup("<span weight='bold' foreground='red'>OFFLINE</span>")
         self.oil_processed_value.set_markup("<span weight='bold' foreground='green'>" + str(self.oil_processed_amount) + " Liters</span>")
         self.oil_spilled_value.set_markup("<span weight='bold' foreground='red'>" + str(self.oil_spilled_amount) + " Liters</span>")
-        self.oil_flow_before_value.set_markup("<span weight='bold' foreground='green'>" + str(self.oil_flow_before_amount) + " Liters</span>")
+        #self.oil_flow_before_value.set_markup("<span weight='bold' foreground='green'>" + str(self.oil_flow_before_amount) + " Liters</span>")
         self.oil_flow_after_value.set_markup("<span weight='bold' foreground='green'>" + str(self.oil_flow_after_amount) + " Liters / seconds</span>")
         self.outlet_valve_value.set_markup("<span weight='bold' foreground='red'>N/A</span>")
         self.waste_value.set_markup("<span weight='bold' foreground='red'>N/A</span>")
@@ -263,7 +263,7 @@ class HMIWindow(Gtk.Window):
         self.oil_processed_value = oil_processed_value
         self.oil_spilled_value = oil_spilled_value
         self.outlet_valve_value = outlet_valve_value
-        self.oil_flow_before_value = oil_flow_before_value
+        #self.oil_flow_before_value = oil_flow_before_value
         self.oil_flow_after_value = oil_flow_after_value
 
         self.control_valve_position_value = control_valve_position_value
