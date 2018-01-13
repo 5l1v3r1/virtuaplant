@@ -85,11 +85,12 @@ oil_flow_in = 0
 PLC_FEED_PUMP_COM = 0x01 #regs[0]
 PLC_OUTLET_VALVE = 0x03 #regs[2]
 PLC_SEP_VALVE = 0x04 #regs[3]
-#PLC_CONTROL_VALVE_COM = 0x05
+OIL_FLOW_SENS = 0x0D #regs[3]
 PLC_WASTE_VALVE = 0x08 #regs[7]
 
 # FEEDBACK SIGNALS
-PLC_TANK_LEVEL = 0x02 #regs[1]
+PLC_TANK1_LEVEL = 0x02 #regs[1]
+PLC_TANK2_LEVEL = 0x05 #regs[4]
 PLC_OIL_SPILL = 0x06 #regs[5]
 PLC_OIL_PROCESSED = 0x07 #regs[6]
 PLC_OIL_UPPER = 0x09 #regs[8]
@@ -105,7 +106,8 @@ flow_meter_in_collision = 0x1
 flow_meter_out_collision = 0xA
 PID_valve_collision = 0x2
 oil_processed_collision = 0x3
-tank_level_collision = 0x4
+tank1_level_collision = 0x4
+tank2_level_collision = 0xB
 ball_collision = 0x5
 outlet_valve_collision = 0x6
 sep_valve_collision = 0x7
@@ -206,19 +208,29 @@ def PID_valve_shape(space, percentageOpen):
     shape.collision_type = PID_valve_collision # PID_valve
     space.add(shape)
     return shape
-# Add the tank level sensor
-def tank_level_sensor(space):
+# SENSORS
+# Add the tank level sensors
+def tank1_level_sensor(space):
     body = pymunk.Body()
     body.position = (115, 450)
     radius = 3
     a = (0, 0)
     b = (0, 0)
     shape = pymunk.Circle(body, radius, (0, 0))
-    shape.collision_type = tank_level_collision # tank_level
+    shape.collision_type = tank1_level_collision # tank_level
     space.add(shape)
     return shape
 
-# SENSORS
+def tank2_level_sensor(space):
+    body = pymunk.Body()
+    body.position = (355, 305)
+    radius = 3
+    a = (0, 0)
+    b = (0, 0)
+    shape = pymunk.Circle(body, radius, (0, 0))
+    shape.collision_type = tank2_level_collision # tank_level
+    space.add(shape)
+    return shape
 
 # Sensor at the bottom of the world that detects and counts spills
 def oil_spill_sensor(space):
@@ -375,9 +387,14 @@ def no_collision(space, arbiter, *args, **kwargs):
     return True
 
 # Called when level sensor in tank is hit
-def level_reached(space, arbiter, *args, **kwargs):
+def tank1_level_reached(space, arbiter, *args, **kwargs):
     log.debug("Level reached")
-    PLCSetTag(PLC_TANK_LEVEL, 1) # Level Sensor Hit, Tank full
+    PLCSetTag(PLC_TANK1_LEVEL, 1) # Level Sensor Hit, Tank full
+    return False
+
+def tank2_level_reached(space, arbiter, *args, **kwargs):
+    log.debug("Level reached")
+    PLCSetTag(PLC_TANK2_LEVEL, 1) # Level Sensor Hit, Tank full
     return False
 
 def oil_spilled(space, arbiter, *args, **kwargs):
@@ -395,7 +412,11 @@ def oil_processed(space, arbiter, *args, **kwargs):
         PLCSetTag(PLC_OIL_PROCESSED, 65000) # We processed a unit of oil
         PLCSetTag(PLC_OIL_UPPER, oil_processed_amount-65000) # We processed a unit of oil
     else:
-        PLCSetTag(PLC_OIL_PROCESSED, oil_processed_amount) # We processed a unit of oil
+        PLCSetTag(PLC_OIL_PROCESSED, oil_processed_amount)
+        # We processed a unit of oil
+    if oil_processed_amount % 600 <= 5:
+        #since there is flow, tank level most be low enough
+        PLCSetTag(PLC_TANK2_LEVEL, 0)
     return False
 
 def measure_flow_before(space, arbiter, *args, **kwargs):
@@ -409,6 +430,9 @@ def measure_flow_after(space, arbiter, *args, **kwargs):
     log.debug("Oil Flow Out")
     oil_flow_out = oil_flow_out + 1
     PLCSetTag(PLC_OIL_FLOW_AFTER, oil_flow_out)
+    if oil_flow_out % 100 <= 10:
+        #since there is flow, tank level most be low enough
+        PLCSetTag(PLC_TANK1_LEVEL, 0)
     return False
 
 # This is on when separation is on
@@ -440,7 +464,7 @@ def waste_valve_closed(space, arbiter, *args, **kwargs):
 def run_world():
     #INITIALISE PID
 
-    p = PID(0.9,0.3,0)
+    p = PID(0.7,0.3,0)
     p.SetPoint = 60
     p.setSampleTime(0.01)
     pygame.init()
@@ -454,8 +478,9 @@ def run_world():
     space.gravity = (0.0, -900.0)
 
     # COLLISION HANDLER ADDED TO OBJECTS AND COLLISIONS
-    # When oil collides with tank_level, call level_reached
-    space.add_collision_handler(tank_level_collision, ball_collision, begin=level_reached)
+    # When oil collides with tank_level, call tank1_level_reached
+    space.add_collision_handler(tank1_level_collision, ball_collision, begin=tank1_level_reached)
+    space.add_collision_handler(tank2_level_collision, ball_collision, begin=tank2_level_reached)
     # When oil touches the oil_spill marker, call oil_spilled
     space.add_collision_handler(oil_spill_collision, ball_collision, begin=oil_spilled)
     # When oil touches the oil_process marker, call oil_processed
@@ -480,11 +505,11 @@ def run_world():
     oil_spill = oil_spill_sensor(space)
     flow_meter_incoming = flow_meter_in(space)
     flow_meter_outgoing = flow_meter_out(space)
-    tank_level = tank_level_sensor(space)
     oil_process = oil_processed_sensor(space)
     outlet = outlet_valve(space)
     waste_valve_obj = waste_valve(space)
-
+    tank_level1 = tank1_level_sensor(space)
+    tank_level2 = tank2_level_sensor(space)
 
     balls = []
     ticks_to_next_ball = 1
@@ -554,7 +579,8 @@ def run_world():
 
         draw_polygon(bg, pump)
         draw_lines(bg, lines)
-        draw_ball(bg, tank_level, THECOLORS['black'])
+        draw_ball(bg, tank_level1, THECOLORS['black'])
+        draw_ball(bg, tank_level2, THECOLORS['black'])
         draw_line(bg, sep_valve_obj)
         draw_line(bg, outlet)
         draw_line(bg, waste_valve_obj)
