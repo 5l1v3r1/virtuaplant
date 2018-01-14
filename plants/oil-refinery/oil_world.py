@@ -3,7 +3,6 @@
 # Values of 1 = ON, OPEN
 # Values of 0 = OFF, CLOSED
 from PID import *
-
 import logging
 
 # - Multithreading
@@ -137,9 +136,9 @@ def to_pygame(p):
 # Radius - 2 is the smallest possible. If reduced further, becomes invisible.
 # IF you decide to change radius, change the draw_ball function too.
 # body._bodycontents.v_limit - changes the reaction factor - the lower is less reactive
-def add_ball(space):
-    mass = 0.0001
-    radius = 2
+def add_ball(space, rad, rmass):
+    mass = rmass
+    radius = rad
     inertia = pymunk.moment_for_circle(mass, 0, radius, (0,0))
     body = pymunk.Body(mass, inertia)
     body._bodycontents.v_limit = 100
@@ -154,9 +153,9 @@ def add_ball(space):
 
 # Add a ball to the space
 # IF you decide to change radius (ABOVE) then change this function too.
-def draw_ball(screen, ball, color=THECOLORS['black']):
+def draw_ball(screen, ball, color=THECOLORS['brown']):
     p = int(ball.body.position.x), 600-int(ball.body.position.y)
-    pygame.draw.circle(screen, color, p, int(ball.radius), 2)
+    pygame.draw.circle(screen, THECOLORS['black'], p, int(ball.radius), int(ball.radius))
 
 # VALVES
 # Add the separator vessel release
@@ -212,7 +211,7 @@ def PID_valve_shape(space, percentageOpen):
 # Add the tank level sensors
 def tank1_level_sensor(space):
     body = pymunk.Body()
-    body.position = (115, 450)
+    body.position = (115, 500)
     radius = 3
     a = (0, 0)
     b = (0, 0)
@@ -463,9 +462,10 @@ def waste_valve_closed(space, arbiter, *args, **kwargs):
 
 def run_world():
     #INITIALISE PID
-
-    p = PID(0.7,0.3,0)
-    p.SetPoint = 60
+    randradius = 1
+    rmass = 0.001
+    p = PID(0.6,0.3,0) #0.7,0.3,0
+    p.SetPoint = 85
     p.setSampleTime(0.01)
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -501,13 +501,10 @@ def run_world():
     # Add the objects to the game world
     pump = add_pump(space)
     lines = add_oil_unit(space)
-    sep_valve_obj = sep_valve(space)
     oil_spill = oil_spill_sensor(space)
     flow_meter_incoming = flow_meter_in(space)
     flow_meter_outgoing = flow_meter_out(space)
     oil_process = oil_processed_sensor(space)
-    outlet = outlet_valve(space)
-    waste_valve_obj = waste_valve(space)
     tank_level1 = tank1_level_sensor(space)
     tank_level2 = tank2_level_sensor(space)
 
@@ -525,6 +522,9 @@ def run_world():
         if percentageOpen <= 0:
             percentageOpen = 0
         PID_valve = PID_valve_shape(space, percentageOpen)
+        outlet = outlet_valve(space)
+        sep_valve_obj = sep_valve(space)
+        waste_valve_obj = waste_valve(space)
         #percentageOpen += 0.1
 
         # Advance the game clock
@@ -560,10 +560,12 @@ def run_world():
 
 
         ticks_to_next_ball -= 1
-
+        randradius = random.randint(1,3)
+        rmass = random.uniform(0.0001,0.001)
+        
         if ticks_to_next_ball <= 0 and PLCGetTag(PLC_FEED_PUMP_COM) == 1:
             ticks_to_next_ball = 1
-            ball_shape = add_ball(space)
+            ball_shape = add_ball(space,randradius, rmass)
             balls.append(ball_shape)
 
         balls_to_remove = []
@@ -571,7 +573,7 @@ def run_world():
             if ball.body.position.y < 0 or ball.body.position.x > SCREEN_WIDTH+150:
                 balls_to_remove.append(ball)
 
-            draw_ball(bg, ball)
+            draw_ball(bg, ball, randradius)
 
         for ball in balls_to_remove:
             space.remove(ball, ball.body)
@@ -619,7 +621,13 @@ def run_world():
 
         space.step(1/FPS)
         pygame.display.flip()
+
+        #Remove valve object for smoother collisions
         space.remove(PID_valve)
+        space.remove(outlet)
+        space.remove(sep_valve_obj)
+        space.remove(waste_valve_obj)
+
         PLCSetTag(PLC_CONTROL_VALVE_POS, percentageOpen)
 
     if reactor.running:
