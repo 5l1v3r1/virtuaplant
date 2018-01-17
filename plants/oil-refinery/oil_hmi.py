@@ -36,7 +36,7 @@ if len(sys.argv)==1:
 # Split and process arguments into "args"
 args = parser.parse_args()
 
-MODBUS_SLEEP=1
+MODBUS_SLEEP=0.01
 
 class HMIWindow(Gtk.Window):
     oil_processed_amount = 0
@@ -55,7 +55,7 @@ class HMIWindow(Gtk.Window):
 
     def initModbus(self):
         # Create modbus connection to specified address and port
-        self.modbusClient = ModbusClient(args.server_addr, port=5020)
+        self.modbusClient = ModbusClient(args.server_addr, port=502)
 
     # Default values for the HMI labels
     def resetLabels(self):

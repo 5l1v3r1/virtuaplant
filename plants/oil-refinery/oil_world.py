@@ -65,10 +65,10 @@ log.setLevel(logging.INFO)
 # Display settings
 SCREEN_WIDTH = 580
 SCREEN_HEIGHT = 460
-FPS=50.0
+FPS=70.0
 
 # Port the world will listen on
-MODBUS_SERVER_PORT=5020
+MODBUS_SERVER_PORT=502
 
 # Amount of oil spilled/processed
 oil_spilled_amount = 0
@@ -211,7 +211,7 @@ def PID_valve_shape(space, percentageOpen):
 # Add the tank level sensors
 def tank1_level_sensor(space):
     body = pymunk.Body()
-    body.position = (115, 500)
+    body.position = (115, 520)
     radius = 3
     a = (0, 0)
     b = (0, 0)
@@ -222,7 +222,7 @@ def tank1_level_sensor(space):
 
 def tank2_level_sensor(space):
     body = pymunk.Body()
-    body.position = (355, 305)
+    body.position = (355, 315)
     radius = 3
     a = (0, 0)
     b = (0, 0)
@@ -562,7 +562,7 @@ def run_world():
         ticks_to_next_ball -= 1
         randradius = random.randint(1,3)
         rmass = random.uniform(0.0001,0.001)
-        
+
         if ticks_to_next_ball <= 0 and PLCGetTag(PLC_FEED_PUMP_COM) == 1:
             ticks_to_next_ball = 1
             ball_shape = add_ball(space,randradius, rmass)
