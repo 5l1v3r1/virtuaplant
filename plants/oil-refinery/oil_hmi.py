@@ -36,7 +36,7 @@ if len(sys.argv)==1:
 # Split and process arguments into "args"
 args = parser.parse_args()
 
-MODBUS_SLEEP=0.01
+MODBUS_SLEEP=1
 
 class HMIWindow(Gtk.Window):
     oil_processed_amount = 0
